@@ -24,13 +24,43 @@ if (isExternalPostgres) {
     ssl:
       databaseUrl.includes("sslmode=require") ||
       databaseUrl.includes("neon.tech") ||
-      databaseUrl.includes("supabase.co")
+      databaseUrl.includes("supabase.co") ||
+      databaseUrl.includes("render.com") ||
+      databaseUrl.includes("dpg-")
         ? { rejectUnauthorized: false }
         : undefined,
   });
   dbInstance = drizzle(poolInstance, { schema });
   try {
+    const migrationCandidates = [
+      path.resolve(__dirname, "../../../drizzle/0000_lonely_siren.sql"),
+      path.resolve(process.cwd(), "drizzle/0000_lonely_siren.sql"),
+      path.resolve("/opt/render/project/src/drizzle/0000_lonely_siren.sql"),
+    ];
+    const migrationFile = migrationCandidates.find((f) => fs.existsSync(f));
+    if (migrationFile) {
+      const rawSql = fs.readFileSync(migrationFile, "utf8");
+      for (const statement of rawSql
+        .split("--> statement-breakpoint")
+        .map((s) => s.trim())
+        .filter(Boolean)) {
+        try {
+          const safeStatement = statement.replace(/^CREATE TABLE "/i, 'CREATE TABLE IF NOT EXISTS "');
+          await poolInstance.query(safeStatement);
+        } catch (stErr: any) {
+          if (stErr.code !== "42P07" && stErr.code !== "42710") {
+            console.warn("External migration notice:", stErr.message);
+          }
+        }
+      }
+    }
     await poolInstance.query(`
+      CREATE TABLE IF NOT EXISTS "admin_credentials" (
+        "id" serial PRIMARY KEY NOT NULL,
+        "password_hash" text NOT NULL,
+        "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+        "created_at" timestamp with time zone DEFAULT now() NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS "ad_settings" (
         "id" serial PRIMARY KEY NOT NULL,
         "enabled" boolean DEFAULT true NOT NULL,
@@ -50,9 +80,12 @@ if (isExternalPostgres) {
       INSERT INTO "ad_settings" ("id", "enabled", "hide_for_premium", "top_banner_enabled", "bottom_banner_enabled", "feed_banner_enabled", "monetag_zone_id")
       SELECT 1, true, true, true, true, true, '8912345'
       WHERE NOT EXISTS (SELECT 1 FROM "ad_settings");
+      INSERT INTO "settings" ("id", "site_name", "enable_notice", "enable_referral", "postgres_enabled", "maintenance_mode")
+      SELECT 1, 'Dark Would Expose', false, true, true, false
+      WHERE NOT EXISTS (SELECT 1 FROM "settings");
     `);
   } catch (err) {
-    console.warn("External database ad_settings check warning:", err);
+    console.warn("External database setup warning:", err);
   }
 } else {
   // Local embedded fallback (runs instantly on localhost without any external database)
@@ -78,22 +111,28 @@ if (isExternalPostgres) {
   }
 
   try {
-    const check: any = await pglite.query(
-      "SELECT count(*) as count FROM information_schema.tables WHERE table_schema='public'"
-    );
-    if (parseInt(check.rows[0]?.count || "0", 10) === 0) {
-      const migrationFile = path.resolve(__dirname, "../../../drizzle/0000_lonely_siren.sql");
-      if (fs.existsSync(migrationFile)) {
-        const rawSql = fs.readFileSync(migrationFile, "utf8");
-        for (const statement of rawSql
-          .split("--> statement-breakpoint")
-          .map((s) => s.trim())
-          .filter(Boolean)) {
-          await pglite.exec(statement);
+    const migrationFile = path.resolve(__dirname, "../../../drizzle/0000_lonely_siren.sql");
+    if (fs.existsSync(migrationFile)) {
+      const rawSql = fs.readFileSync(migrationFile, "utf8");
+      for (const statement of rawSql
+        .split("--> statement-breakpoint")
+        .map((s) => s.trim())
+        .filter(Boolean)) {
+        try {
+          const safeStatement = statement.replace(/^CREATE TABLE "/i, 'CREATE TABLE IF NOT EXISTS "');
+          await pglite.exec(safeStatement);
+        } catch (stErr: any) {
+          // ignore duplicate tables
         }
       }
     }
     await pglite.exec(`
+      CREATE TABLE IF NOT EXISTS "admin_credentials" (
+        "id" serial PRIMARY KEY NOT NULL,
+        "password_hash" text NOT NULL,
+        "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+        "created_at" timestamp with time zone DEFAULT now() NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS "ad_settings" (
         "id" serial PRIMARY KEY NOT NULL,
         "enabled" boolean DEFAULT true NOT NULL,
@@ -113,6 +152,9 @@ if (isExternalPostgres) {
       INSERT INTO "ad_settings" ("id", "enabled", "hide_for_premium", "top_banner_enabled", "bottom_banner_enabled", "feed_banner_enabled", "monetag_zone_id")
       SELECT 1, true, true, true, true, true, '8912345'
       WHERE NOT EXISTS (SELECT 1 FROM "ad_settings");
+      INSERT INTO "settings" ("id", "site_name", "enable_notice", "enable_referral", "postgres_enabled", "maintenance_mode")
+      SELECT 1, 'Dark Would Expose', false, true, true, false
+      WHERE NOT EXISTS (SELECT 1 FROM "settings");
     `);
   } catch (err) {
     console.error("Local database init error:", err);
