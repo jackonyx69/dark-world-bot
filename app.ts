@@ -4,7 +4,8 @@ import pinoHttp from "pino-http";
 import router from "./routes/index.ts";
 import { logger } from "./utils/logger";
 import path from "node:path";
-import { db, settingsTable } from "@workspace/db";
+import fs from "node:fs";
+import { db, settingsTable, postsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 
 const app: Express = express();
@@ -34,14 +35,16 @@ app.use(
     },
   }),
 );
+
 app.use(cors());
-app.use(express.json({ limit: "35mb" }));
-app.use(express.urlencoded({ extended: true, limit: "35mb" }));
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+
 app.use("/uploads", express.static(uploadRoot));
 app.use("/api/uploads", express.static(uploadRoot));
 
 app.use("/api", async (req, res, next) => {
-  if (req.path.startsWith("/admin") || req.path === "/settings" || req.path === "/healthz") {
+  if (req.path.startsWith("/admin") || req.path === "/settings" || req.path === "/healthz" || req.path === "/health") {
     next();
     return;
   }
@@ -72,14 +75,56 @@ app.use("/api", (err: any, req: any, res: any, next: any) => {
 
 if (webRoot) {
   app.use(express.static(webRoot));
-  app.use((req, res, next) => {
+  app.use(async (req, res, next) => {
     if (
       req.method === "GET" &&
       !req.path.startsWith("/api") &&
       !req.path.startsWith("/uploads") &&
       req.accepts("html")
     ) {
-      res.sendFile(path.join(webRoot, "index.html"));
+      const indexPath = path.join(webRoot, "index.html");
+      if (req.path.startsWith("/post/")) {
+        const slug = req.path.slice("/post/".length).split("/")[0]?.trim();
+        if (slug) {
+          try {
+            const [post] = await db
+              .select({
+                title: postsTable.title,
+                description: postsTable.description,
+                thumbnailUrl: postsTable.thumbnailUrl,
+              })
+              .from(postsTable)
+              .where(eq(postsTable.slug, slug))
+              .limit(1);
+
+            if (post) {
+              let html = fs.readFileSync(indexPath, "utf8");
+              const postTitle = post.title.replace(/"/g, "&quot;");
+              const postDesc = (post.description || `${post.title} — Dark Would Expose`).replace(/"/g, "&quot;");
+              const postImage = post.thumbnailUrl ? post.thumbnailUrl.replace(/"/g, "&quot;") : "";
+
+              html = html.replace(/<title>.*?<\/title>/i, `<title>${postTitle} — Dark Would Expose</title>`);
+              html = html.replace(/<meta property="og:title" content=".*?" \/>/i, `<meta property="og:title" content="${postTitle}" />`);
+              html = html.replace(/<meta name="twitter:title" content=".*?" \/>/i, `<meta name="twitter:title" content="${postTitle}" />`);
+              html = html.replace(/<meta property="og:description" content=".*?" \/>/i, `<meta property="og:description" content="${postDesc}" />`);
+              html = html.replace(/<meta name="twitter:description" content=".*?" \/>/i, `<meta name="twitter:description" content="${postDesc}" />`);
+
+              if (postImage) {
+                const ogImageTag = `<meta property="og:image" content="${postImage}" />\n    <meta name="twitter:image" content="${postImage}" />`;
+                html = html.replace(/<\/head>/i, `    ${ogImageTag}\n  </head>`);
+              }
+
+              res.setHeader("Content-Type", "text/html; charset=utf-8");
+              res.send(html);
+              return;
+            }
+          } catch {
+            // fallback to default index.html
+          }
+        }
+      }
+
+      res.sendFile(indexPath);
       return;
     }
     next();
