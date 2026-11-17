@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
-import { db, settingsTable } from "@workspace/db";
+import { db, settingsTable, postsTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 import { getTelegramBotToken, isValidTelegramWebhookSecret } from "../utils/telegram";
 
 const router: IRouter = Router();
@@ -72,26 +73,58 @@ router.post("/telegram/webhook", async (req, res): Promise<void> => {
   }
 
   const [settings] = await db
-    .select({ webhookUrl: settingsTable.webhookUrl })
+    .select({
+      webhookUrl: settingsTable.webhookUrl,
+      channelLink: settingsTable.channelLink,
+      groupLink: settingsTable.groupLink,
+      telegramUsername: settingsTable.telegramUsername,
+    })
     .from(settingsTable)
     .limit(1);
   const webhookUrl = settings?.webhookUrl || process.env.TELEGRAM_WEBHOOK_URL;
-  const miniAppUrl = getMiniAppUrl(webhookUrl);
+  let miniAppUrl = getMiniAppUrl(webhookUrl);
   if (!miniAppUrl) {
-    res.sendStatus(503);
-    return;
+    const host = req.get("host");
+    miniAppUrl = host ? `https://${host}/` : "https://dark-world-bot.onrender.com/";
   }
 
   const firstName = typeof message.from?.first_name === "string" && message.from.first_name.trim()
     ? escapeHtml(message.from.first_name.trim())
     : "বন্ধু";
-  const welcomeMessage =
-    `👋 হ্যালো ${firstName} !\n\n` +
-    "🌑 Dark Would Expose-এ তোমাকে স্বাগতম।\n" +
-    "নতুন, পুরাতন, বাংলাদেশের সবধরনের ভাইরাল ভিডিও একসাথে পেয়ে যাবেন এখানে।\n\n" +
-    "কী? বিশ্বাস হচ্ছে না?\n" +
-    "তাহলে ঘুরে আসুন আমাদের Dark Would-এ।\n\n" +
-    "🚀 ক্লিক করুন Open Dark Would-এ 🔽";
+
+  const startArgMatch = text.trim().match(/^\/start(?:@[A-Za-z0-9_]+)?\s+(.+)$/i);
+  const startArg = startArgMatch ? startArgMatch[1].trim() : "";
+  const postSlug = startArg ? startArg.replace(/^post_/, "").trim() : "";
+  const targetMiniAppUrl = postSlug ? `${miniAppUrl.replace(/\/+$/, "")}/post/${postSlug}` : miniAppUrl;
+
+  let postTitle = "";
+  let postThumbnail: string | null = null;
+  if (postSlug) {
+    try {
+      const [found] = await db
+        .select({ title: postsTable.title, thumbnailUrl: postsTable.thumbnailUrl })
+        .from(postsTable)
+        .where(eq(postsTable.slug, postSlug))
+        .limit(1);
+      if (found) {
+        postTitle = found.title;
+        postThumbnail = found.thumbnailUrl;
+      }
+    } catch {
+      // ignore db error
+    }
+  }
+
+  const welcomeMessage = postSlug
+    ? `👋 হ্যালো ${firstName}!\n\n` +
+      `🎬 <b>${escapeHtml(postTitle || postSlug)}</b>\n\n` +
+      `ভিডিওটি দেখতে নিচের বাটনে ক্লিক করুন 🔽`
+    : `👋 হ্যালো ${firstName} !\n\n` +
+      "🌑 Dark Would Expose-এ তোমাকে স্বাগতম।\n" +
+      "নতুন, পুরাতন, বাংলাদেশের সবধরনের ভাইরাল ভিডিও একসাথে পেয়ে যাবেন এখানে।\n\n" +
+      "কী? বিশ্বাস হচ্ছে না?\n" +
+      "তাহলে ঘুরে আসুন আমাদের Dark Would-এ।\n\n" +
+      "🚀 ক্লিক করুন Open Dark Would-এ 🔽";
 
   try {
     const token = getTelegramBotToken();
@@ -99,6 +132,57 @@ router.post("/telegram/webhook", async (req, res): Promise<void> => {
       res.sendStatus(503);
       return;
     }
+
+    const buttonTitle = postTitle ? `🎬 Play "${postTitle}"` : (postSlug ? "🎬 Watch Video Now" : "🚀 Open Dark Would");
+    const inlineKeyboard: Array<Array<{ text: string; url?: string; web_app?: { url: string } }>> = [
+      [{
+        text: buttonTitle,
+        web_app: { url: targetMiniAppUrl },
+      }],
+    ];
+
+    const communityButtons: Array<{ text: string; url: string }> = [];
+    if (settings?.channelLink) {
+      communityButtons.push({ text: "📢 Join Channel", url: settings.channelLink });
+    }
+    if (settings?.groupLink) {
+      communityButtons.push({ text: "💬 Join Group", url: settings.groupLink });
+    }
+    if (communityButtons.length > 0) {
+      inlineKeyboard.push(communityButtons);
+    }
+
+    if (settings?.telegramUsername) {
+      inlineKeyboard.push([{
+        text: "👤 Contact Admin",
+        url: `https://t.me/${settings.telegramUsername.replace(/^@/, "")}`,
+      }]);
+    }
+
+    if (postThumbnail && postThumbnail.startsWith("http")) {
+      try {
+        const photoRes = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            chat_id: chatId,
+            photo: postThumbnail,
+            caption: welcomeMessage,
+            parse_mode: "HTML",
+            reply_markup: {
+              inline_keyboard: inlineKeyboard,
+            },
+          }),
+        });
+        if (photoRes.ok) {
+          res.sendStatus(200);
+          return;
+        }
+      } catch {
+        // fallback to sendMessage
+      }
+    }
+
     const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -106,10 +190,7 @@ router.post("/telegram/webhook", async (req, res): Promise<void> => {
         chat_id: chatId,
         text: welcomeMessage,
         reply_markup: {
-          inline_keyboard: [[{
-            text: "Open Dark Would",
-            web_app: { url: miniAppUrl },
-          }]],
+          inline_keyboard: inlineKeyboard,
         },
       }),
     });
