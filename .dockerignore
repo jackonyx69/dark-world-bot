@@ -1,8 +1,0 @@
-node_modules
-.data
-.git
-.pocketdev
-*.log
-.env
-.env.*
-!.env.example
