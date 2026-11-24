@@ -1,0 +1,48 @@
+import { Router, type IRouter } from "express";
+import healthRouter from "./health";
+import telegramRouter from "./telegram";
+import adminAuthRouter from "./admin/auth";
+import adminStatsRouter from "./admin/stats";
+import adminUsersRouter from "./admin/users";
+import adminPostsRouter from "./admin/posts";
+import adminCategoriesRouter from "./admin/categories";
+import adminSocialLinksRouter from "./admin/social-links";
+import adminPackagesRouter from "./admin/packages";
+import adminPaymentMethodsRouter from "./admin/payment-methods";
+import adminPaymentsRouter from "./admin/payments";
+import adminVideoCallGirlsRouter from "./admin/video-call-girls";
+import adminSettingsRouter from "./admin/settings";
+import postsRouter from "./posts";
+import usersRouter from "./users";
+import adProgressRouter from "./ad-progress";
+import paymentsRouter from "./payments";
+import galleryRouter from "./gallery";
+import adminGalleryRouter from "./admin/gallery";
+import adminOperationsRouter from "./admin/operations";
+import adsRouter from "./ads";
+
+const router: IRouter = Router();
+
+router.use(healthRouter);
+router.use(telegramRouter);
+router.use(adminAuthRouter);
+router.use(adminStatsRouter);
+router.use(adminUsersRouter);
+router.use(adminPostsRouter);
+router.use(adminCategoriesRouter);
+router.use(adminSocialLinksRouter);
+router.use(adminPackagesRouter);
+router.use(adminPaymentMethodsRouter);
+router.use(adminPaymentsRouter);
+router.use(adminVideoCallGirlsRouter);
+router.use(adminSettingsRouter);
+router.use(adminGalleryRouter);
+router.use(adminOperationsRouter);
+router.use(adsRouter);
+router.use(postsRouter);
+router.use(usersRouter);
+router.use(adProgressRouter);
+router.use(paymentsRouter);
+router.use(galleryRouter);
+
+export default router;
