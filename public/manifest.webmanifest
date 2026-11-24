@@ -1,9 +1,0 @@
-{
-  "name": "Dark Would Expose",
-  "short_name": "DWE",
-  "start_url": "/",
-  "display": "standalone",
-  "background_color": "#090a0f",
-  "theme_color": "#090a0f",
-  "description": "Premium content, gallery previews, memberships and VIP calls."
-}
