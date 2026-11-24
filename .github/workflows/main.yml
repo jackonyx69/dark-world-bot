@@ -1,0 +1,19 @@
+name: Unzip
+on: [push]
+permissions:
+  contents: write
+jobs:
+  unzip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          unzip -o "*.zip"
+          rm -f *.zip
+          rm -rf .github
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add -A
+          git commit -m "Unzipped project files"
+          git push
+          
